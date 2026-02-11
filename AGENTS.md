@@ -50,6 +50,8 @@ skills/
       troubleshooting.md           # Common errors and fixes
     scripts/
       generate-oauth-key.js        # ES256 key generator (requires jose)
+  gainforest-beads/
+    SKILL.md                       # Beads planning workflow for all coding tasks
 ```
 
 ## Creating a New Skill

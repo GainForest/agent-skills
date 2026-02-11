@@ -19,6 +19,7 @@ Replace `gainforest-oauth-setup` with the name of the skill you want to install.
 | Skill | Description |
 |-------|-------------|
 | [gainforest-oauth-setup](skills/gainforest-oauth-setup/SKILL.md) | Implement ATProto OAuth in a Next.js App Router app using gainforest-sdk-nextjs |
+| [gainforest-beads](skills/gainforest-beads/SKILL.md) | Beads (`bd`) planning workflow for all coding tasks — epic/task management, dependency tracking, commit-linked closures |
 
 ## How Skills Work
 
