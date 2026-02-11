@@ -4,156 +4,176 @@ description: GainForest beads (`bd`) planning workflow. Activates on ALL user wo
 compatibility: Requires bd CLI (npm install -g @beads/bd), git repository
 metadata:
   author: gainforest
-  version: "1.0"
+  version: "1.1"
 ---
 
 # GainForest Beads Planning Workflow
 
-Every user work request flows through beads (`bd`) — a git-backed graph issue tracker. This ensures that if you (the agent) lose all memory mid-task, any new agent can pick up exactly where you left off by reading the beads graph.
+You are an agent working inside a team of humans and other agents. Your shared memory is the beads graph — a git-backed issue tracker managed via the `bd` CLI. Everything you plan, claim, and complete is recorded there. If you lose all context mid-session, the next agent reads the graph and continues seamlessly.
 
-Run `bd onboard` and `bd prime` for full CLI documentation.
+Run `bd onboard` and `bd prime` to learn the full CLI.
 
 ## When to Apply
 
-**Every time a user asks you to do work.** Not just when they mention beads. This includes feature requests, bug fixes, refactors, investigations, and multi-step projects.
+**Every time a user asks you to do work.** Feature requests, bug fixes, refactors, investigations — all of it. Don't wait for the user to mention beads.
 
 ## Prerequisites
 
-- `bd` CLI installed (`bd version` to check; install with `npm install -g @beads/bd`)
-- Ask the user for their GitHub handle if you don't know it — you need it for every `create` and `claim`
+- `bd` CLI installed (`bd version` to verify; `npm install -g @beads/bd` to install)
+- The user's GitHub handle (ask if you don't know it — you need it for every bead you create)
 
-## Critical Rules
+## How It Works: Three Phases
 
-1. **Sync first, always.** Start every session with:
-   ```bash
-   bd init --quiet
-   bd sync
-   ```
-   This pulls the latest graph. Never work from stale state.
+Everything follows three phases in strict order: **Plan, Execute, Record.** Never skip or reorder.
 
-2. **Beads before code.** Plan in beads first. Check epics, create tasks, get user approval, claim — then write code.
+---
 
-3. **User owns everything.** Use `--assignee <user-github-handle>` on every `bd create`. The user is the creator and owner, not the agent.
+### Phase 1: Plan
 
-4. **Tasks must survive memory loss.** Write each task so a fresh agent with zero context can execute it. Include:
-   - **What** to change and **why**
-   - **Where** in the codebase (file paths, component names)
-   - **Acceptance criteria** (how to verify it's done)
-   - **Dependencies** and why they exist
+**Goal:** The beads graph reflects what needs to be done before you touch any code.
 
-5. **Dependencies must be reasoned.** Don't add dependencies reflexively. Ask:
-   - Does task B consume output from task A? → `bd dep add B A`
-   - Must A be tested before B can integrate? → `bd dep add B A`
-   - Same area but independent? → No dependency needed
-   - Document the reasoning in the task description.
+#### 1a. Sync the graph
 
-6. **Claim before working.** `bd update <id> --claim` before touching code.
-
-7. **One task, then stop.** After closing a task, report to the user and STOP. Do not silently advance to the next task.
-
-8. **Commit code before closing beads.** The git commit is proof of work. The beads close is bookkeeping. Never reverse this order.
-
-9. **Always link the commit.** Close format: `bd close <id> --reason "Completed: <commit-hash>"`. No exceptions.
-
-10. **Git commit the beads graph after every change.** After any `bd create`, `bd update`, or `bd close`:
-    ```bash
-    bd sync
-    git add .beads/
-    git commit -m "beads: <what changed>"
-    ```
-    This is how other agents and team members discover what you're working on.
-
-11. **Blockers stop work.** If blocked, mark the task deferred and ask the user to file new tasks for the issue:
-    ```bash
-    bd update <id> --status deferred --notes "Blocked: <why>"
-    ```
-
-## Workflow
-
-### Step 0: Sync
+Always start here. Every session. No exceptions.
 
 ```bash
 bd init --quiet
 bd sync
 ```
 
-### Step 1: Find or Create an Epic
+#### 1b. Find or create an epic
+
+Check if an existing epic covers the user's request:
 
 ```bash
 bd list --type epic --json
 ```
 
-If an epic matches the user's request, confirm with them. Otherwise:
+If one fits, confirm with the user. If not, create one:
 
 ```bash
-bd create "Epic: <goal>" -t epic -p <priority> --assignee <handle> --json
-bd sync && git add .beads/ && git commit -m "beads: create epic — <title>"
+bd create "Epic: <goal>" -t epic -p <priority> --assignee <user-github-handle> --json
 ```
 
-### Step 2: Plan Tasks with the User
+#### 1c. Break the epic into tasks
 
-Propose a task breakdown. Iterate until the user approves.
+Propose a task breakdown to the user. Iterate until they approve.
 
 ```bash
-bd create "<task description>" -t task -p <priority> --parent <epic-id> --assignee <handle> --json
-bd dep add <child-id> <parent-id>  # only when justified
+bd create "<detailed task description>" -t task -p <priority> --parent <epic-id> --assignee <user-github-handle> --json
 ```
 
-After planning is finalized:
+#### 1d. Add dependencies (only when justified)
+
+Before adding a dependency, answer: *why can't these run in parallel?*
+
+- Task B needs output from task A? Add it.
+- Task A must be tested before B integrates? Add it.
+- Same area but truly independent? Don't add one.
 
 ```bash
-bd sync && git add .beads/ && git commit -m "beads: plan tasks for <epic-id>"
+bd dep add <blocked-task> <blocking-task>
 ```
 
-### Step 3: Claim and Execute
+Document the reasoning in the blocked task's description.
+
+#### 1e. Commit the plan
 
 ```bash
-bd ready --json                    # see what's unblocked
-bd update <task-id> --claim        # claim it
+bd sync
+git add .beads/ && git commit -m "beads: plan tasks for <epic-id>" && git push
+```
+
+This makes the plan visible to all team members and agents immediately.
+
+---
+
+### Phase 2: Execute
+
+**Goal:** Work on tasks one at a time, following a strict claim-work-commit-close loop.
+
+#### The loop (repeat for each task):
+
+**Step 1 — Pick.** See what's unblocked:
+
+```bash
+bd ready --json
+```
+
+**Step 2 — Claim.** This tells everyone you're working on it:
+
+```bash
+bd update <task-id> --claim
 bd sync
 ```
 
-Do the work.
+**Step 3 — Work.** Write code, fix bugs, whatever the task requires.
 
-### Step 4: Close the Task
+**Step 4 — Commit the code.** Include the task ID so the commit is traceable:
 
 ```bash
-# 1. Commit the code (include task ID)
 git add <files>
-git commit -m "<description> (<task-id>)"
-
-# 2. Close with commit reference
-bd close <task-id> --reason "Completed: <commit-hash>"
-
-# 3. Sync the graph
-bd sync
-git add .beads/
-git commit -m "beads: close <task-id>"
-git push
+git commit -m "<what you did> (<task-id>)"
 ```
 
-**Then report to the user and stop.**
-
-### Step 5: Handle Blockers
+**Step 5 — Close the bead.** Always close *after* committing — the commit is proof of work, the close is bookkeeping:
 
 ```bash
-bd update <task-id> --status deferred --notes "Blocked: <description>"
-bd sync && git add .beads/ && git commit -m "beads: defer <task-id> — <reason>"
+bd close <task-id> --reason "Completed: <commit-hash>"
 ```
 
-Ask the user to file new tasks addressing the blocker.
+**Step 6 — Sync and push the graph:**
+
+```bash
+bd sync
+git add .beads/ && git commit -m "beads: close <task-id>" && git push
+```
+
+**Step 7 — Loop back to Step 1.** Pick the next unblocked task and repeat. Never skip Steps 4-6.
+
+---
+
+### Phase 3: Handle Problems
+
+**If you hit a blocker** that prevents completing the current task:
+
+1. Mark the task as deferred with a clear explanation:
+   ```bash
+   bd update <task-id> --status deferred --notes "Blocked: <what went wrong and why>"
+   bd sync
+   git add .beads/ && git commit -m "beads: defer <task-id> — <reason>" && git push
+   ```
+
+2. Ask the user to create new beads tasks that address the blocker. Don't silently work around it.
+
+---
+
+## Rules at a Glance
+
+| # | Rule | Why |
+|---|------|-----|
+| 1 | Sync first, always | Stale graphs cause duplicate work and conflicts |
+| 2 | Plan before code | Unplanned work is invisible to the team |
+| 3 | User's handle on every bead | The user owns the work, not the agent |
+| 4 | Tasks must survive memory loss | A fresh agent should execute any task from its description alone |
+| 5 | Reason about dependencies | Wrong deps block work; missing deps cause integration failures |
+| 6 | Claim before working | Prevents two agents from doing the same task |
+| 7 | Commit code, then close bead, then next task | The commit is proof; the close is bookkeeping; never skip or reorder |
+| 8 | Link the commit on close | `bd close <id> --reason "Completed: <hash>"` — no exceptions |
+| 9 | Git-commit `.beads/` after every graph change | This is how the team sees what's happening |
+| 10 | Blockers stop work | Defer and escalate; don't silently work around problems |
 
 ## Resuming After Context Loss
 
 ```bash
 bd init --quiet
 bd sync
-bd list --status open --status in_progress --json   # what's active?
+bd list --status open --status in_progress --json   # what exists?
 bd ready --json                                      # what's unblocked?
-bd show <id> --json                                  # read task details
+bd show <id> --json                                  # read a task's full context
 ```
 
-In-progress tasks were claimed by someone (possibly you in a past session). Read their descriptions — they contain everything you need to continue.
+Look at `in_progress` tasks first — someone (possibly you in a past session) was working on them. The task descriptions contain everything you need to continue.
 
 ## What Makes a Good Task Description
 
@@ -162,3 +182,5 @@ In-progress tasks were claimed by someone (possibly you in a past session). Read
 
 **Good:**
 > Fix OAuth callback race condition in `app/api/oauth/callback/route.ts`. When two callbacks arrive within 100ms, the second overwrites the first session in Supabase. Add a mutex or check-and-set pattern on the `atproto_oauth_session` table. Acceptance: concurrent callback test passes. Depends on bd-a3f8.1 (session store refactor) because the fix requires the new `upsert` method.
+
+The difference: the good description lets a stranger complete the task without asking a single question.
