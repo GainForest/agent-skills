@@ -1,43 +1,43 @@
 ---
 name: coderabbit-review-resolver
-description: Fetch open CodeRabbit AI review comments from a GitHub PR, plan fixes as beads tasks, and dispatch workers to resolve them. Use when a PR has unresolved CodeRabbit reviews that need addressing.
-compatibility: Requires gh CLI (authenticated), hb CLI (beads), git repository with GitHub remote
+description: Fetch open CodeRabbit AI review comments from a GitHub PR and produce a high-signal triage report, including likely false positives, effort vs impact, and recommended actions.
+compatibility: Requires gh CLI (authenticated), jq, git repository with GitHub remote
 metadata:
   author: gainforest
-  version: "1.0.0"
+  version: "1.1.0"
 ---
 
 # CodeRabbit Review Resolver
 
-This skill resolves open CodeRabbit inline review comments by planning and dispatching worker agents to implement the required fixes.
+This skill analyzes open CodeRabbit inline review comments and produces a decision-ready triage report. It does not create tasks, dispatch workers, or modify code.
 
 ## When to Apply
 
 Use this skill when:
-- A PR has unresolved CodeRabbit review comments that need fixing
-- The user asks to address/fix/resolve CodeRabbit feedback
-- After a CodeRabbit review is posted and the user wants to act on it
+- A PR has unresolved CodeRabbit review comments and you need to decide what to do
+- The user asks for a quality pass on CodeRabbit feedback before implementation
+- You need to separate high-value fixes from low-value or likely false-positive comments
 
 ## Prerequisites
 
 Before starting, verify:
 - `gh` CLI is installed and authenticated (`gh auth status`)
-- `hb` CLI is installed (`hb version`)
+- `jq` is installed (`jq --version`)
 - Current directory is a git repo with a GitHub remote
 - The current branch has an open PR (or user provides a PR number)
 
 ## Critical Rules
 
-1. Never modify code directly — this skill plans and dispatches, it does not implement fixes
-2. Always run the fetch script first — don't assume you know what CodeRabbit said
-3. Present the triage plan to the user before creating beads tasks — get approval first
-4. One beads epic per PR — don't create multiple epics for the same PR's review
-5. Workers must not change code outside the scope of the CodeRabbit comment they're fixing
-6. After all workers complete, review the aggregate diff for seam issues before marking the epic done
+1. Never modify code directly - this skill only fetches and analyzes comments
+2. Always run the fetch script first - do not infer comments from memory
+3. Analyze every open CodeRabbit thread root before making recommendations
+4. Explicitly call out likely false positives and uncertain calls
+5. Always include effort vs impact so users can choose what is worth doing
+6. Prefer actionable, concrete recommendations over generic advice
 
 ## Phase 1: Fetch Review Comments
 
-**Step 1 — Detect PR context:**
+**Step 1 - Detect PR context:**
 
 ```bash
 # Auto-detect PR number from current branch
@@ -46,7 +46,7 @@ PR_NUMBER=$(gh pr view --json number -q .number)
 
 If auto-detection fails (no open PR for the current branch), ask the user to provide a PR number explicitly.
 
-**Step 2 — Run the fetch script:**
+**Step 2 - Run the fetch script:**
 
 ```bash
 # Auto-detect PR from current branch
@@ -58,7 +58,7 @@ bash scripts/fetch-review-comments.sh --pr 123
 
 See [scripts/fetch-review-comments.sh](scripts/fetch-review-comments.sh) for implementation details.
 
-**Step 3 — Parse the output:**
+**Step 3 - Parse the output:**
 
 The script outputs a JSON array to stdout. Each element has:
 
@@ -76,119 +76,81 @@ The script outputs a JSON array to stdout. Each element has:
 
 Thread root comments have `in_reply_to_id: null`; replies have a non-null value. After parsing, report to the user: **"Found X open CodeRabbit comments across Y files."**
 
-**Step 4 — Handle edge cases:**
+**Step 4 - Handle edge cases:**
 
-- **Zero comments:** Tell the user "No open CodeRabbit comments found" and stop — there is nothing to resolve.
-- **Script error:** Check `gh auth status` to verify authentication, confirm the PR exists with `gh pr view`, then report the error message to the user.
+- **Zero comments:** Tell the user "No open CodeRabbit comments found" and stop.
+- **Script error:** Check `gh auth status`, confirm the PR exists with `gh pr view`, then report the error message.
 
-For details on the underlying API calls, see [references/gh-api-patterns.md](references/gh-api-patterns.md).
+For details on underlying API calls, see [references/gh-api-patterns.md](references/gh-api-patterns.md).
 
-## Phase 2: Plan and Triage
+## Phase 2: Triage and Recommendation
 
-**Step 1 — Categorize each comment:**
+**Step 1 - Classify each comment:**
 
-Read each comment body and assign a category and priority:
+For each thread-root comment, assign:
+- category and priority (see [references/comment-triage-guide.md](references/comment-triage-guide.md))
+- confidence in the claim (`high`, `medium`, `low`)
+- false-positive likelihood (`low`, `medium`, `high`)
 
-| Category | Priority |
-|---|---|
-| `bug`, `security` | P1 |
-| `error-handling`, `type-safety` | P2 |
-| `performance`, `style`, `nit` | P3 |
+**Step 2 - Evaluate effort vs impact:**
 
-See [references/comment-triage-guide.md](references/comment-triage-guide.md) for detailed criteria, example patterns, and when to skip a comment.
+Use [references/recommendation-rubric.md](references/recommendation-rubric.md) to score:
+- implementation effort (`S`, `M`, `L`, `XL`)
+- expected impact (`high`, `medium`, `low`)
+- risk if ignored (`high`, `medium`, `low`)
 
-**Step 2 — Group comments into tasks:**
+**Step 3 - Recommend an action per comment:**
 
-- **By file**: 3+ comments in the same file at the same priority → one task
-- **By theme**: Comments across files sharing the same category → one task
-- **Never group across priority levels** — a P1 bug and a P3 nit in the same file become two tasks
-- **Max 5–7 comments per task** — split larger groups further
+Choose exactly one action:
+- `do now` - high impact or high risk if ignored, with reasonable effort
+- `do later` - valid but lower urgency or higher implementation cost
+- `skip` - likely false positive, preference-only, or poor ROI
 
-**Step 3 — Present the plan to the user:**
+Each recommendation must include a one-line "why".
 
-Output a summary table before creating any beads:
+**Step 4 - Produce per-comment summaries:**
 
-```
-| # | Task Title                          | Files                        | Comments | Priority | Est. |
-|---|-------------------------------------|------------------------------|----------|----------|------|
-| 1 | Fix null check in auth.ts           | auth.ts:42,58                | 2        | P1       | 15m  |
-| 2 | Add error handling across API routes | api/foo.ts:10, api/bar.ts:22 | 2        | P2       | 30m  |
-| 3 | Style fixes in utils                | utils.ts:5,12,18             | 3        | P3       | 15m  |
-```
+For each comment, provide this structure:
 
-**Wait for user approval before proceeding to Phase 3.**
-
-If the user rejects or wants to revise the plan, adjust the grouping, priorities, or skipped comments based on their feedback and present the updated table. Repeat until approved.
-
-**Step 4 — Handle skipped comments:**
-
-List any comments you are intentionally skipping (questions, false positives, preference disagreements) in a separate section below the table. Ask the user to confirm each skip before continuing.
-
-**Step 5 — Create the beads epic:**
-
-After the user approves the plan:
-
-```bash
-hb create "Epic: Resolve CodeRabbit review for PR #<N>" -t epic -p 1 \
-  -d "Resolve all open CodeRabbit inline review comments on PR #<N>. <count> comments across <files> files." \
-  -l scope:small \
-  --json
+```text
+Comment <N> - <path>:<line>
+- Category/Priority: <category> / <P1|P2|P3>
+- CodeRabbit claim: <plain-language summary>
+- What likely needs changing: <specific fix direction>
+- Effort: <S|M|L|XL>
+- Impact: <high|medium|low>
+- False-positive likelihood: <low|medium|high>
+- Recommendation: <do now|do later|skip>
+- Why: <1 sentence>
+- Link: <url>
 ```
 
-Save the returned epic ID — you will use it as the `--parent` for every task in Phase 3.
+## Phase 3: Rollup for Decision-Making
 
-## Phase 3: Dispatch Workers
+After per-comment analysis, provide a concise rollup with four sections:
 
-**Step 1 — Create beads tasks.**
-For each row in the approved plan table from Phase 2, create a task using the template from [references/worker-dispatch-patterns.md](references/worker-dispatch-patterns.md):
+1. **Must do now**
+   - Critical/high-leverage fixes that materially improve correctness, security, or reliability
 
-```bash
-hb create "<task title>" -t task -p <priority> --parent <epic-id> \
-  -d "<description per worker-dispatch-patterns.md template>" \
-  --acceptance "<binary pass/fail criteria>" \
-  -e <minutes> \
-  -l scope:small \
-  --json
-```
+2. **Good but not worth it right now**
+   - Valid suggestions where complexity/cost is high relative to current benefit
 
-**Step 2 — Add dependencies (only when needed).**
-Most CodeRabbit fixes are independent — default to no dependencies. Add one only when:
-- Two tasks modify the same function in conflicting ways
-- A refactor task must land before a feature task that builds on it
+3. **Likely false positives or low-value nits**
+   - Comments to skip or defer unless the team has strict style goals
 
-```bash
-hb dep add <blocked-task> <blocker-task>
-```
+4. **Recommended execution order**
+   - A practical sequence (top 3-5) that maximizes risk reduction first
 
-**Step 3 — Commit the plan.**
+When possible, include estimated total effort for the "Must do now" set.
 
-```bash
-hb sync && git add .beads/ && git commit -m "beads: plan CodeRabbit fixes for PR #<N>" && git push
-```
+## Output Quality Bar
 
-**Step 4 — Dispatch workers.**
-Tell the user which task IDs are ready. Tasks with no dependencies can be dispatched in parallel:
-
-```
-Ready for dispatch:
-- agent-skills-XXXX.1: Fix null check in auth.ts (P1, 15m)
-- agent-skills-XXXX.2: Add error handling across API routes (P2, 30m)
-- agent-skills-XXXX.3: Style fixes in utils (P3, 15m)
-
-Dispatch with: @worker agent-skills-XXXX.1
-```
-
-**Step 5 — Post-dispatch: Integration check.**
-After all workers complete:
-1. Review the aggregate diff: `git diff <base-branch>...HEAD`
-2. Check for seam issues: conflicting imports, duplicate declarations, broken references
-3. If issues found, create follow-up tasks using the same template
-4. If clean, mark the epic for integration review:
-
-```bash
-hb update <epic-id> --add-label needs-integration-review
-hb sync && git add .beads/ && git commit -m "beads: mark <epic-id> for review" && git push
-```
+Your report is successful only if it:
+- Covers all open thread-root CodeRabbit comments
+- Clearly separates high-confidence issues from uncertain ones
+- Explains false-positive calls explicitly
+- Makes tradeoffs visible (effort, impact, risk if ignored)
+- Gives the user a clear, prioritized path forward
 
 ## Expected File Structure
 
@@ -199,14 +161,14 @@ skills/
     references/
       gh-api-patterns.md
       comment-triage-guide.md
-      worker-dispatch-patterns.md
+      recommendation-rubric.md
     scripts/
       fetch-review-comments.sh
 ```
 
 ## Further Reading
 
-- [gh-api-patterns.md](references/gh-api-patterns.md) — GitHub API patterns for fetching PR review comments
-- [comment-triage-guide.md](references/comment-triage-guide.md) — How to categorize and prioritize CodeRabbit comments
-- [worker-dispatch-patterns.md](references/worker-dispatch-patterns.md) — Task description templates and dispatch patterns for workers
-- [fetch-review-comments.sh](scripts/fetch-review-comments.sh) — Shell script to fetch open CodeRabbit inline review comments
+- [gh-api-patterns.md](references/gh-api-patterns.md) - GitHub API patterns for fetching PR review comments
+- [comment-triage-guide.md](references/comment-triage-guide.md) - How to categorize and prioritize CodeRabbit comments
+- [recommendation-rubric.md](references/recommendation-rubric.md) - How to decide do now/do later/skip based on effort, impact, risk, and confidence
+- [fetch-review-comments.sh](scripts/fetch-review-comments.sh) - Script to fetch open CodeRabbit inline review comments

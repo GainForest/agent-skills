@@ -1,6 +1,6 @@
 # Comment Triage Guide
 
-How to categorize, prioritize, and group CodeRabbit inline review comments into actionable beads tasks.
+How to classify and assess CodeRabbit inline review comments for practical decision-making.
 
 ---
 
@@ -14,7 +14,7 @@ How to categorize, prioritize, and group CodeRabbit inline review comments into 
 | `type-safety` | Missing type annotations, unsafe casts, `any` usage, unjustified non-null assertions | "This is typed as `any`", "Non-null assertion `!` used without guard", "Return type is inferred as `unknown`" |
 | `performance` | N+1 queries, unnecessary re-renders, missing memoization, large bundle imports | "This query runs inside a loop", "Component re-renders on every keystroke", "Entire lodash is imported instead of the single function" |
 | `style` | Naming conventions, dead code, import ordering, formatting | "Variable name `d` is not descriptive", "This import is unused", "Prefer `const` over `let` here" |
-| `nit` | Minor suggestions, alternative approaches, cosmetic preferences | "Consider using optional chaining here", "This could be written more concisely as…", "Minor: trailing whitespace" |
+| `nit` | Minor suggestions, alternative approaches, cosmetic preferences | "Consider using optional chaining here", "This could be written more concisely as...", "Minor: trailing whitespace" |
 
 ---
 
@@ -22,93 +22,84 @@ How to categorize, prioritize, and group CodeRabbit inline review comments into 
 
 | Priority | Level | Categories |
 |---|---|---|
-| P1 | Critical — fix before merge | `bug`, `security` |
-| P2 | Important — fix soon | `error-handling`, `type-safety` |
+| P1 | Critical - fix before merge when valid | `bug`, `security` |
+| P2 | Important - fix soon when valid | `error-handling`, `type-safety` |
 | P3 | Nice-to-have | `performance`, `style`, `nit` |
 
----
-
-## 3. Grouping Strategy
-
-Apply these rules in order. Stop at the first rule that matches.
-
-1. **By file (same priority):** If 3 or more comments in the same file share the same priority level, group them into one task titled `Fix <category> issues in <filename>`.
-2. **By theme (cross-file, same category):** If comments across different files share the same category (e.g., all are `error-handling`), group them into one task titled `Add <category> across <N> files`.
-3. **Singleton:** If neither rule above applies, each comment becomes its own task.
-
-**Hard constraints — never break these:**
-
-- **Never group across priority levels.** A P1 bug and a P3 nit in the same file become two separate tasks.
-- **Max 5–7 comments per task.** If a group exceeds this, split it into `Part 1`, `Part 2`, etc.
-- **Each task must be completable independently.** If fixing comment B requires fixing comment A first, add a beads dependency.
+Priority signals urgency, not certainty. A P1 can still be a false positive.
 
 ---
 
-## 4. When to Skip a Comment
+## 3. Confidence and False-Positive Heuristics
 
-Create no task for a comment if any of the following apply. Flag all skips to the user for confirmation.
+Assign both fields independently.
 
-| Skip Condition | Example |
-|---|---|
-| Comment is a question, not an actionable suggestion | "Why is this value hardcoded?" |
-| Comment suggests an alternative that is equally valid | "You could also use `Array.from()` here" |
-| Code was intentionally written that way | Non-null assertion on a value guaranteed by schema |
-| Comment is a false positive (CodeRabbit misread the code) | Flagging a deliberate empty catch block that has a comment explaining why |
+| Dimension | High | Medium | Low |
+|---|---|---|---|
+| Confidence in claim | Clear code path and reproducible concern | Plausible issue, missing some context | Ambiguous or contradicted by nearby code/contracts |
+| False-positive likelihood | Strong evidence issue is real | Could be real but uncertain | Likely misread by bot or intentionally designed behavior |
 
-When skipping, note the reason so you can explain it to the user.
+### Strong false-positive signals
+
+- Comment ignores guard/validation that exists earlier in the call path
+- Comment misses framework/runtime guarantees (schema validation, generated types)
+- Suggestion conflicts with intentional behavior documented in code comments/tests
+- Comment is purely stylistic while current code follows project conventions
 
 ---
 
-## 5. Example Triage
+## 4. Recommendation Mapping
 
-> **Comment 1** — `auth/session.ts:42`
+Map each comment to one action:
+
+- `do now`: High impact or high risk if ignored, with acceptable effort
+- `do later`: Valid issue, but urgency is lower or effort is comparatively high
+- `skip`: Likely false positive, preference-only suggestion, or poor ROI
+
+Always include one sentence explaining the tradeoff behind the recommendation.
+
+---
+
+## 5. Triage Examples
+
+> **Comment 1** - `auth/session.ts:42`
 > "This function returns `null` when the session is expired, but callers on lines 88 and 103 dereference the result without a null check."
 
-- **Category:** `bug`
-- **Priority:** P1
-- **Decision:** Standalone task — critical, single file, single issue.
+- **Category/Priority:** `bug` / P1
+- **Confidence:** high
+- **False-positive likelihood:** low
+- **Recommendation:** `do now`
+- **Why:** high probability runtime error on an expected path.
 
 ---
 
-> **Comment 2** — `api/users.ts:17`
+> **Comment 2** - `api/users.ts:17`
 > "User-supplied `id` is interpolated directly into the SQL string. Use a parameterized query."
 
-- **Category:** `security`
-- **Priority:** P1
-- **Decision:** Standalone task — security issues are always isolated for visibility.
+- **Category/Priority:** `security` / P1
+- **Confidence:** high
+- **False-positive likelihood:** low
+- **Recommendation:** `do now`
+- **Why:** potential injection vector with high impact.
 
 ---
 
-> **Comment 3** — `api/posts.ts:55`, `api/comments.ts:30`, `api/likes.ts:12`
-> All three: "This `await` call is not wrapped in try/catch."
-
-- **Category:** `error-handling`
-- **Priority:** P2
-- **Decision:** Group by theme — same category, cross-file, same priority → one task: `Add error handling to API routes`.
-
----
-
-> **Comment 4** — `utils/format.ts:8`
-> "Consider renaming `fn` to something more descriptive."
-
-- **Category:** `nit`
-- **Priority:** P3
-- **Decision:** Standalone task (only one comment in file at this priority).
-
----
-
-> **Comment 5** — `components/Table.tsx:22`
+> **Comment 3** - `components/Table.tsx:22`
 > "Why is `pageSize` set to 50 here? Is this intentional?"
 
-- **Category:** — (question, not actionable)
-- **Priority:** —
-- **Decision:** **Skip.** Flag to user: "CodeRabbit asked about `pageSize` on line 22 — confirm this is intentional so we can dismiss the comment."
+- **Category/Priority:** question / n/a
+- **Confidence:** low
+- **False-positive likelihood:** high
+- **Recommendation:** `skip` (or convert to team discussion)
+- **Why:** no concrete defect described.
 
 ---
 
-> **Comment 6** — `lib/db.ts:10`, `lib/db.ts:34`, `lib/db.ts:67`
-> All three: "This variable is typed as `any`."
+> **Comment 4** - `lib/db.ts:10`
+> "This variable is typed as `any`."
 
-- **Category:** `type-safety`
-- **Priority:** P2
-- **Decision:** Group by file — 3+ comments in the same file at the same priority → one task: `Fix type-safety issues in lib/db.ts`.
+- **Category/Priority:** `type-safety` / P2
+- **Confidence:** medium
+- **False-positive likelihood:** medium
+- **Recommendation:** `do later`
+- **Why:** valid maintainability issue, but lower immediate risk than correctness/security defects.
