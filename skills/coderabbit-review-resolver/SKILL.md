@@ -1,22 +1,22 @@
 ---
 name: coderabbit-review-resolver
-description: Fetch open CodeRabbit AI review comments from a GitHub PR and produce a high-signal triage report, including likely false positives, effort vs impact, and recommended actions.
+description: Fetch open CodeRabbit AI review comments from a GitHub PR, verify which comments are actual current issues, and summarize only confirmed issues.
 compatibility: Requires gh CLI (authenticated), jq, git repository with GitHub remote
 metadata:
   author: gainforest
-  version: "1.1.0"
+  version: "1.2.0"
 ---
 
 # CodeRabbit Review Resolver
 
-This skill analyzes open CodeRabbit inline review comments and produces a decision-ready triage report. It does not create tasks, dispatch workers, or modify code.
+This skill analyzes open CodeRabbit inline review comments, verifies each comment against the current code, and summarizes only comments that are actual current issues. It does not create tasks, dispatch workers, or modify code.
 
 ## When to Apply
 
 Use this skill when:
-- A PR has unresolved CodeRabbit review comments and you need to decide what to do
-- The user asks for a quality pass on CodeRabbit feedback before implementation
-- You need to separate high-value fixes from low-value or likely false-positive comments
+- A PR has unresolved CodeRabbit review comments and you need to know which ones are real issues
+- The user asks for CodeRabbit feedback to be verified before implementation
+- You need to filter out false positives, already-fixed comments, or non-issues before summarizing the remaining issues
 
 ## Prerequisites
 
@@ -30,10 +30,10 @@ Before starting, verify:
 
 1. Never modify code directly - this skill only fetches and analyzes comments
 2. Always run the fetch script first - do not infer comments from memory
-3. Analyze every open CodeRabbit thread root before making recommendations
-4. Explicitly call out likely false positives and uncertain calls
-5. Always include effort vs impact so users can choose what is worth doing
-6. Prefer actionable, concrete recommendations over generic advice
+3. Verify every open CodeRabbit thread root against the current code before summarizing anything
+4. Do not report comments that are false positives, already fixed, or not actual issues
+5. Do not classify comments by priority, likelihood, effort, impact, or recommendation
+6. Provide only concise summaries of confirmed current issues
 
 ## Phase 1: Fetch Review Comments
 
@@ -83,74 +83,53 @@ Thread root comments have `in_reply_to_id: null`; replies have a non-null value.
 
 For details on underlying API calls, see [references/gh-api-patterns.md](references/gh-api-patterns.md).
 
-## Phase 2: Triage and Recommendation
+## Phase 2: Verify Actual Issues
 
-**Step 1 - Classify each comment:**
+**Step 1 - Inspect the current code:**
 
-For each thread-root comment, assign:
-- category and priority (see [references/comment-triage-guide.md](references/comment-triage-guide.md))
-- confidence in the claim (`high`, `medium`, `low`)
-- false-positive likelihood (`low`, `medium`, `high`)
+For each thread-root comment, inspect the referenced file and surrounding code. Check whether the CodeRabbit claim still applies to the current code.
 
-**Step 2 - Evaluate effort vs impact:**
+**Step 2 - Filter out non-issues:**
 
-Use [references/recommendation-rubric.md](references/recommendation-rubric.md) to score:
-- implementation effort (`S`, `M`, `L`, `XL`)
-- expected impact (`high`, `medium`, `low`)
-- risk if ignored (`high`, `medium`, `low`)
+Exclude a comment from the final output if:
+- the issue has already been fixed
+- the comment is a false positive
+- the comment is only a preference, style nit, question, or non-actionable suggestion
+- the current code or surrounding context contradicts the claim
 
-**Step 3 - Recommend an action per comment:**
+**Step 3 - Confirm actual issues:**
 
-Choose exactly one action:
-- `do now` - high impact or high risk if ignored, with reasonable effort
-- `do later` - valid but lower urgency or higher implementation cost
-- `skip` - likely false positive, preference-only, or poor ROI
+Only keep comments where the current code confirms there is an actual issue.
 
-Each recommendation must include a one-line "why".
-
-**Step 4 - Produce per-comment summaries:**
+**Step 4 - Produce confirmed issue summaries:**
 
 For each comment, provide this structure:
 
 ```text
-Comment <N> - <path>:<line>
-- Category/Priority: <category> / <P1|P2|P3>
+Issue <N> - <path>:<line>
 - CodeRabbit claim: <plain-language summary>
-- What likely needs changing: <specific fix direction>
-- Effort: <S|M|L|XL>
-- Impact: <high|medium|low>
-- False-positive likelihood: <low|medium|high>
-- Recommendation: <do now|do later|skip>
-- Why: <1 sentence>
+- Verification: <why this is an actual current issue>
+- Issue summary: <concise explanation of the problem>
 - Link: <url>
 ```
 
-## Phase 3: Rollup for Decision-Making
+## Phase 3: Final Output
 
-After per-comment analysis, provide a concise rollup with four sections:
+After verification, provide only:
 
-1. **Must do now**
-   - Critical/high-leverage fixes that materially improve correctness, security, or reliability
+- the total number of confirmed current issues
+- the per-issue summaries using the template above
 
-2. **Good but not worth it right now**
-   - Valid suggestions where complexity/cost is high relative to current benefit
-
-3. **Likely false positives or low-value nits**
-   - Comments to skip or defer unless the team has strict style goals
-
-4. **Recommended execution order**
-   - A practical sequence (top 3-5) that maximizes risk reduction first
-
-When possible, include estimated total effort for the "Must do now" set.
+If no comments are confirmed as actual current issues, say: **"No confirmed current issues found."**
 
 ## Output Quality Bar
 
 Your report is successful only if it:
 - Covers all open thread-root CodeRabbit comments
-- Clearly separates high-confidence issues from uncertain ones
-- Explains false-positive calls explicitly
-- Makes tradeoffs visible (effort, impact, risk if ignored)
-- Gives the user a clear, prioritized path forward
+- Verifies each comment against the current code
+- Excludes false positives, already-fixed comments, and non-issues
+- Includes only confirmed current issues in the final output
+- Summarizes each confirmed issue clearly and concisely
 
 ## Expected File Structure
 
@@ -160,8 +139,6 @@ skills/
     SKILL.md
     references/
       gh-api-patterns.md
-      comment-triage-guide.md
-      recommendation-rubric.md
     scripts/
       fetch-review-comments.sh
 ```
@@ -169,6 +146,4 @@ skills/
 ## Further Reading
 
 - [gh-api-patterns.md](references/gh-api-patterns.md) - GitHub API patterns for fetching PR review comments
-- [comment-triage-guide.md](references/comment-triage-guide.md) - How to categorize and prioritize CodeRabbit comments
-- [recommendation-rubric.md](references/recommendation-rubric.md) - How to decide do now/do later/skip based on effort, impact, risk, and confidence
 - [fetch-review-comments.sh](scripts/fetch-review-comments.sh) - Script to fetch open CodeRabbit inline review comments
